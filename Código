@@ -1,0 +1,170 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SW 32
+#define X_AXIS 34
+#define Y_AXIS 35
+#define BUZZER 25
+#define OLED_RESET -1
+Adafruit_SSD1306 display(128, 64, &Wire, OLED_RESET);
+
+#define MAX_ENEMIES 10
+#define PLAYER_SIZE 8
+#define BULLET_SPEED 3
+#define ENEMY_SPEED 1
+#define ENEMY_BULLET_SPEED 2
+
+int playerX=64, playerY=56, level=1, lives=3;
+
+struct Bullet {
+  int x,y; bool active;
+};
+
+struct Enemy {
+  int x,y; bool active;
+  Bullet bullet;
+};
+
+Enemy enemies[MAX_ENEMIES];
+Bullet playerBullet={0,0,false};
+int enemyCount;
+
+void setup(){
+  pinMode(SW, INPUT_PULLUP);
+  pinMode(X_AXIS, INPUT);
+  pinMode(Y_AXIS, INPUT);
+  pinMode(BUZZER, OUTPUT);
+  Wire.begin();
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.clearDisplay(); display.display();
+  randomSeed(analogRead(0));
+  initLevel();
+}
+
+void loop(){
+  // Movimiento jugador
+  int xVal=analogRead(X_AXIS);
+  if(xVal<1000) playerX+=2;
+  else if(xVal>3000) playerX-=2;
+  if(playerX<0) playerX=0;
+  if(playerX>120) playerX=120;
+
+  // Disparo jugador
+  if(!digitalRead(SW) && !playerBullet.active){
+    playerBullet={playerX+PLAYER_SIZE/2,playerY,true};
+    tone(BUZZER,1000,100);
+  }
+  if(playerBullet.active){
+    playerBullet.y-=BULLET_SPEED;
+    if(playerBullet.y<0) playerBullet.active=false;
+  }
+
+  // Actualizar enemigos
+  for(int i=0;i<enemyCount;i++){
+    if(!enemies[i].active) continue;
+    enemies[i].y+=ENEMY_SPEED;
+    if(enemies[i].y>64){
+      enemies[i].y= random(5,20);
+      enemies[i].x= random(0,120);
+    }
+    // Disparo enemigo
+    if(!enemies[i].bullet.active && random(0,100)<2*level){
+      enemies[i].bullet={enemies[i].x+PLAYER_SIZE/2,enemies[i].y,true};
+    }
+    // Actualizar disparo enemigo
+    if(enemies[i].bullet.active){
+      enemies[i].bullet.y+=ENEMY_BULLET_SPEED;
+      if(enemies[i].bullet.y>64) enemies[i].bullet.active=false;
+      // Colisión bala enemigo-jugador
+      if(enemies[i].bullet.y>=playerY && 
+         enemies[i].bullet.x>=playerX && 
+         enemies[i].bullet.x<=playerX+PLAYER_SIZE){
+        enemies[i].bullet.active=false; lives--;
+        tone(BUZZER,500,300);
+        if(lives<=0) gameOver();
+      }
+    }
+    // Colisión bala jugador-enemigo
+    if(playerBullet.active &&
+       playerBullet.y<enemies[i].y+PLAYER_SIZE &&
+       playerBullet.x>enemies[i].x &&
+       playerBullet.x<enemies[i].x+PLAYER_SIZE){
+      enemies[i].active=false; playerBullet.active=false;
+      tone(BUZZER,1500,200);
+    }
+    // Choque directo enemigo-jugador
+    if(enemies[i].active &&
+       playerY<enemies[i].y+PLAYER_SIZE &&
+       playerX+PLAYER_SIZE>enemies[i].x &&
+       playerX<enemies[i].x+PLAYER_SIZE){
+      enemies[i].active=false; lives--;
+      tone(BUZZER,500,300);
+      if(lives<=0) gameOver();
+    }
+  }
+
+  // Si todos los enemigos están derrotados, siguiente nivel
+  if(allEnemiesDefeated()){ level++; initLevel(); }
+
+  drawGame();
+}
+
+void initLevel(){
+  enemyCount=min(level+1,MAX_ENEMIES);
+  for(int i=0;i<enemyCount;i++){
+    enemies[i].x=random(0,120);
+    enemies[i].y=random(5,20);
+    enemies[i].active=true;
+    enemies[i].bullet.active=false;
+  }
+  display.clearDisplay();
+  display.setTextSize(1); display.setTextColor(WHITE);
+  display.setCursor(25,20); display.print("Nivel: "); display.print(level);
+  display.setCursor(25,35); display.print("Vidas: "); display.print(lives);
+  display.display();
+  delay(1500);
+}
+
+bool allEnemiesDefeated(){
+  for(int i=0;i<enemyCount;i++){
+    if(enemies[i].active) return false;
+  }
+  return true;
+}
+
+void drawGame(){
+  display.clearDisplay();
+  // Jugador
+  display.fillRect(playerX,playerY,PLAYER_SIZE,PLAYER_SIZE,WHITE);
+  // Bala jugador
+  if(playerBullet.active){
+    display.fillRect(playerBullet.x,playerBullet.y,2,4,WHITE);
+  }
+  // Enemigos
+  for(int i=0;i<enemyCount;i++){
+    if(enemies[i].active){
+      display.fillRect(enemies[i].x,enemies[i].y,PLAYER_SIZE,PLAYER_SIZE,WHITE);
+    }
+    if(enemies[i].bullet.active){
+      display.fillRect(enemies[i].bullet.x,enemies[i].bullet.y,2,4,WHITE);
+    }
+  }
+  // Info
+  display.setTextSize(1); display.setTextColor(WHITE);
+  display.setCursor(0,0); display.print("N:"); display.print(level);
+  display.setCursor(40,0); display.print("V:"); display.print(lives);
+  display.display();
+}
+
+void gameOver(){
+  display.clearDisplay();
+  display.setTextSize(2); display.setTextColor(WHITE);
+  display.setCursor(15,20); display.print("GAME OVER");
+  display.display();
+  tone(BUZZER,300,1000);
+  delay(2000);
+  // Reiniciar
+  level=1; lives=3; playerX=64; playerBullet.active=false;
+  initLevel();
+}
